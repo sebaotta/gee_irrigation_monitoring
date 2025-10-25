@@ -1,0 +1,147 @@
+/*******************************************************
+  EVI-MAP Empirical Ecological Model for Actual ET
+  ------------------------------------------------------
+  The EVI-MAP model (Contreras et al., 2011) estimates annual actual evapotranspiration (ET) in arid and
+  semi-arid ecosystems based on the positive linear relationship between vegetation greenness (EVI) and
+  water inputs, following the hydrological equilibrium hypothesis (Nemani & Running, 1989).
+
+  The model was adapted for irrigated areas of central–western Argentina (Otta et al., 2022) using EVI derived
+  from Landsat 5–7 imagery (30 m resolution) and CHIRPS v2.0 gridded precipitation data.
+  
+  ET represents the annual precipitation required to sustain the observed EVI. Therefore, ET anomalies indicate
+  the additional water consumed beyond rainfall, typically associated with irrigation.
+
+  Assumptions:
+   - Landsat5 and Landsat7 collections used here are preprocessed (surface reflectance, cloud-masked, QA applied).
+*******************************************************/
+
+// === Parameters ===
+var series_start = '2021-07-01';
+var series_end   = '2024-06-30';
+var MIN_MONTHS_FOR_ANNUAL = 8; // minimum monthly MVCs to accept an annual mean
+
+// Rename input FeatureCollections for clarity
+var irrigation_region_1 = ee.FeatureCollection("users/sebaotta/BID/inspecciones_Jocoli");
+var irrigation_region_2 = ee.FeatureCollection("users/sebaotta/BID/inspecciones_Tulumaya");
+
+var AOI = irrigation_region_1.merge(irrigation_region_2);
+Map.centerObject(AOI, 10);
+
+// Color palette
+var palette = ['FFFFFF','CE7E45','DF923D','F1B555','FCD163','99B718',
+               '74A901','66A000','529400','3E8601','207401','056201',
+               '004C00','023B01','012E01','011D01'];
+
+// === Utility functions ===
+// Apply scaling factors for Landsat surface reflectance bands (SR_Bn)
+function applyScaleFactors(image) {
+  // This assumes the collection uses band names SR_B1..SR_Bn for optical bands
+  var optical = image.select('SR_B.*').multiply(0.0000275).add(-0.2);
+  return image.addBands(optical, null, true)
+              .copyProperties(image, ['system:index','system:time_start','system:time_end','CLOUD_COVER','CLOUD_COVER_LAND']);
+}
+
+// Calculate EVI from Landsat SR (band names SR_B*)
+function calcEVI(image) {
+  var evi = image.expression(
+    '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', {
+      'NIR': image.select('SR_B4'),
+      'RED': image.select('SR_B3'),
+      'BLUE': image.select('SR_B1')
+    });
+  // Mask unrealistic values and set name
+  return evi.rename('EVI').updateMask(evi.gt(0).and(evi.lt(0.8)))
+            .copyProperties(image, ['system:index','system:time_start']);
+}
+
+// Create a monthly MVC (maximum value composite) for a given year/month
+function monthlyMVC(collection, year, month) {
+  var start = ee.Date.fromYMD(year, month, 1);
+  var end = start.advance(1, 'month');
+  var monthly = collection.filterDate(start, end).max();
+  // if monthly is an empty image, create a placeholder (-1) so mask logic works later
+  var placeholder = ee.Image.constant(-1).rename('EVI').clip(AOI).toDouble();
+  var monthlySafe = ee.Image(ee.Algorithms.If(monthly.bandNames().size(), monthly.select(['EVI']).unmask(-1), placeholder));
+  // assign time metadata to the composite
+  return monthlySafe.set('year', year).set('month', month).set('system:time_start', start.millis());
+}
+
+// === Data ingestion & EVI calculation ===
+// NOTE: EVI-MAP is derived from Landsat 5 & Landsat 7 series.
+var L5 = Landsat5.filterBounds(AOI).filterDate(series_start, series_end).map(function(i){ return i.clip(AOI);});
+var L7 = Landsat7.filterBounds(AOI).filterDate(series_start, series_end).map(function(i){ return i.clip(AOI);});
+
+// Select optical SR bands and apply scaling
+L5 = L5.select(['SR_B1','SR_B3','SR_B4']).map(applyScaleFactors).sort('system:time_start');
+L7 = L7.select(['SR_B1','SR_B3','SR_B4']).map(applyScaleFactors).sort('system:time_start');
+
+var landsatCollection = L5.merge(L7).sort('system:time_start');
+
+// Compute EVI per image
+var landsatEVI = landsatCollection.map(calcEVI);
+
+// === Monthly MVC generation ===
+var years = ee.List.sequence(ee.Date(series_start).get('year'), ee.Date(series_end).get('year'));
+var months = ee.List.sequence(1, 12);
+
+var monthlyMVCcollection = ee.ImageCollection.fromImages(
+  years.map(function(y) {
+    return months.map(function(m) {
+      return monthlyMVC(landsatEVI, y, m);
+    });
+  }).flatten()
+).filterDate(series_start, series_end);
+
+// === Annual mean EVI (with data completeness mask) ===
+var annualYears = ee.List.sequence(2021, 2023); // adjust based on analysis needs
+var annualEVIcollection = ee.ImageCollection.fromImages(
+  annualYears.map(function(y) {
+    var start = ee.Date.fromYMD(y, 7, 1);
+    var end = start.advance(1, 'year');
+    var annualMonths = monthlyMVCcollection.filterDate(start, end);
+    var count = annualMonths.count().rename('count');
+    // compute mean EVI for the year and require at least MIN_MONTHS_FOR_ANNUAL valid months
+    var meanEVI = annualMonths.mean().rename('EVI_mean')
+                   .updateMask(count.gte(MIN_MONTHS_FOR_ANNUAL));
+    return meanEVI.set('year', y).set('system:time_start', start.millis()).addBands(count);
+  })
+);
+
+// === Empirical ET estimation (EVI-MAP) ===
+// Keep empirical formula from original script: ET = (b1 - 0.0322228) / 0.000266998
+// NOTE: 'b1' here is the EVI-derived value. Document this calibration (coefficients, units)
+// in docs/TECHNICAL_NOTES.md, and validate against ground data if possible.
+var ETcollection = annualEVIcollection.map(function(img) {
+  // img is single-band (EVI_mean) with a 'count' band
+  var et = img.expression('(b - 0.0322228) / 0.000266998', {'b': img.select('EVI_mean')}).rename('ET_est');
+  return et.copyProperties(img, ['year', 'system:time_start']);
+});
+
+// === Example outputs / visualization ===
+// Mean ET over the full series
+var ET_mean_series = ETcollection.mean().rename('ET_mean');
+Map.addLayer(ET_mean_series, {min: 100, max: 1200, palette: palette}, 'ET_mean (2021-2024)', false);
+
+// Add AOI outline
+var outlineStyle = {color: 'red', fillColor: '00000000', width: 2};
+Map.addLayer(AOI.style(outlineStyle), {}, 'AOI outline', false);
+
+// === Time-series charts for regions ===
+// Chart parameters: use appropriate reducer scale
+print('Irrigation region 1 - ET series',
+  ui.Chart.image.series(ETcollection.select('ET_est'), irrigation_region_1, ee.Reducer.mean(), 30, 'system:time_start'));
+
+print('Irrigation region 2 - ET series',
+  ui.Chart.image.series(ETcollection.select('ET_est'), irrigation_region_2, ee.Reducer.mean(), 30, 'system:time_start'));
+
+// === Optional export (uncomment and set params) ===
+// Export.image.toDrive({
+//   image: ET_mean_series,
+//   description: 'ET_mean_2021_2024',
+//   folder: 'GEE_exports',
+//   fileNamePrefix: 'ET_mean_2021_2024',
+//   scale: 30,
+//   region: AOI.geometry().bounds(),
+//   maxPixels: 1e13
+// });
+
