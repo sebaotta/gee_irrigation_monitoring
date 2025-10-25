@@ -28,7 +28,7 @@ gee_irrigation_monitoring/
 ├── docs/
 │   └── TECHNICAL_NOTES.md      # Calibration parameters, model equations, and notes on units
 │
-└── LICENSE                     # MIT License (recommended)
+└── LICENSE                     # MIT License
 ```
 
 Each workflow is modular and can be directly executed within the GEE Code Editor.  
