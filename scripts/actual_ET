@@ -3,7 +3,7 @@
   ------------------------------------------------------
   The EVI-MAP model (Contreras et al., 2011) estimates annual actual evapotranspiration (ET) in arid and
   semi-arid ecosystems based on the positive linear relationship between vegetation greenness (EVI) and
-  water inputs, following the hydrological equilibrium hypothesis (Nemani & Running, 1989).
+  water inputs, following the hydrological equilibrium hypothesis.
 
   The model was adapted for irrigated areas of central–western Argentina (Otta et al., 2022) using EVI derived
   from Landsat 5–7 imagery (30 m resolution) and CHIRPS v2.0 gridded precipitation data.
@@ -13,6 +13,13 @@
 
   Assumptions:
    - Landsat5 and Landsat7 collections used here are preprocessed (surface reflectance, cloud-masked, QA applied).
+
+   References:
+   - Contreras et al.(2011). Remote sensing  estimates  of  supplementary  water  consumption  by  arid  ecosystems
+     of  central  Argentina. Journal of Hydrology, 397(1–2), 10–22.
+
+   - Otta et al. (2022). Dynamics of Irrigated Drylands in Central-Western Argentina (1986–2018).
+     Geoacta 44(1): 35-55
 *******************************************************/
 
 // === Parameters ===
