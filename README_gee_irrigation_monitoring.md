@@ -25,9 +25,6 @@ gee_irrigation_monitoring/
 │
 ├── soil_moisture_TOTRAM.js     # Thermal-Optical Trapezoid Model for soil moisture (Landsat 8)
 │
-├── docs/
-│   └── TECHNICAL_NOTES.md      # Calibration parameters, model equations, and notes on units
-│
 └── LICENSE                     # MIT License
 ```
 
@@ -102,8 +99,7 @@ The **Thermal-Optical Trapezoid Model (TOTRAM)** combines **NDVI** and **Land Su
 
 If you use or adapt these workflows, please cite the relevant methodological references above and credit:
 
-**Sebastián A. Otta**  
-*Environmental Scientist – Remote Sensing & Hydro-climatic Analysis*  
+**Sebastián A. Otta** 
 📧 sebaotta.irnr@gmail.com
 
 ---
